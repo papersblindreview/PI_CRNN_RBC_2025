@@ -25,8 +25,8 @@ for gpu in gpus:
 
 # HYPERPARAMETERS
 epochs = 5000
-train_size, val_size = 2000, 500
-look_back, look_fwd = 80, 60
+train_size, val_size = 80, 20
+look_back, look_fwd = 10, 10
 batch_size = 8
 nodes, kernel_size = 128, 1
 activation = 'tanh'
@@ -102,7 +102,7 @@ class SequenceGenerator(tf.keras.Model):
 tf.keras.utils.set_random_seed(1)
 
 # LOAD DATA AND dx, dz, dt FOR DERIVATIVES
-data_train, data_val, x, z = load_lstm_data(train_size, val_size, look_back, look_fwd, stride, Uf, P, T_h, T_0, ae_path_model)               
+data_train, data_val, x, z = load_lstm_data(train_size, val_size, look_back, look_fwd, Uf, P, T_h, T_0, seqs=24)               
 dx_np, dz_np, dt_np = get_grads(x, z, const_dict, Uf)
 
 dx = tf.constant(dx_np, tf.float32)
@@ -111,7 +111,7 @@ dt = tf.constant(np.array(dt_np).reshape(1,), tf.float32)
 
 
 # HELPER FUNCTIONS TO COMPUTE DERIVATIVES
-@tf.function(input_signature=[tf.TensorSpec(shape=[bsize,look_fwd,256,256,4], dtype=tf.float32),
+@tf.function(input_signature=[tf.TensorSpec(shape=[1,look_fwd,256,256,4], dtype=tf.float32),
                               tf.TensorSpec(shape=[1], dtype=tf.float32)]) 
 def DT_tf(var, dt):
   ddt1 = (var[...,1:2,:,:,:] - var[...,:1,:,:,:]) / dt
@@ -120,7 +120,7 @@ def DT_tf(var, dt):
   ddt = tf.concat([ddt1,ddt,ddt2], axis=-4)
   return ddt
 
-@tf.function(input_signature=[tf.TensorSpec(shape=[bsize,look_fwd,256,256,4], dtype=tf.float32),
+@tf.function(input_signature=[tf.TensorSpec(shape=[1,look_fwd,256,256,4], dtype=tf.float32),
                               tf.TensorSpec(shape=[256], dtype=tf.float32)]) 
 def DX_tf(var, dx):
   dx = tf.reshape(dx, [1,1,tf.shape(dx)[0],1,1])
@@ -130,7 +130,7 @@ def DX_tf(var, dx):
   ddx = tf.concat([ddx1, ddx, ddx2], axis=-3)
   return ddx / dx 
 
-@tf.function(input_signature=[tf.TensorSpec(shape=[bsize,look_fwd,256,256,4], dtype=tf.float32),
+@tf.function(input_signature=[tf.TensorSpec(shape=[1,look_fwd,256,256,4], dtype=tf.float32),
                               tf.TensorSpec(shape=[256], dtype=tf.float32)])  
 def DZ_tf(var, dz):
   dz = tf.reshape(dz, [1,1,1,tf.shape(dz)[0],1])
@@ -140,9 +140,9 @@ def DZ_tf(var, dz):
   ddz = tf.concat([ddz1,ddz,ddz2], axis=-2)
   return ddz / dz 
 
-PHYSICS LOSS WRT MASS, MOMENTUM, ENERGY CONSERVATION
-@tf.function(input_signature=[tf.TensorSpec(shape=[bsize,look_fwd,256,256,4], dtype=tf.float32),
-                              tf.TensorSpec(shape=[bsize,look_fwd,256,256,4], dtype=tf.float32)])
+#PHYSICS LOSS WRT MASS, MOMENTUM, ENERGY CONSERVATION
+@tf.function(input_signature=[tf.TensorSpec(shape=[1,look_fwd,256,256,4], dtype=tf.float32),
+                              tf.TensorSpec(shape=[1,look_fwd,256,256,4], dtype=tf.float32)])
 def loss_ns(U_true, U_pred): 
   
   loss_data = tf.reduce_mean(tf.math.square(U_pred-U_true), axis=[0,1,2,3])  
@@ -176,7 +176,7 @@ def loss_ns(U_true, U_pred):
   
   return Ld_u, Ld_w, Ld_p, Ld_T, L_mc, L_u, L_w, L_T
      
-optimizer = tf.keras.optimizers.Adam(tf.constant(lstm_model_specs['lr']))
+optimizer = tf.keras.optimizers.Adam(1e-3)
 
 
 context_builder = get_context_builder(hidden_size=nodes, kernel_size=kernel_size)
@@ -211,8 +211,8 @@ input_signature_train = [tf.TensorSpec(shape=[1, look_back, low_dims, low_dims, 
 @tf.function(input_signature=input_signature_train)
 def train_step_pinn(x_batch, x_dec, U_batch, l_dwa, l_g, autoreg_prob):
   with tf.GradientTape(persistent=True) as tape:
-    h, c = encoder(x_batch, training=True)
-    x = decoder((x_batch[:,-1:], h, c, x_dec, autoreg_prob), training=True)
+    h, c = context_builder(x_batch, training=True)
+    x = sequence_generator((x_batch[:,-1:], h, c, x_dec, autoreg_prob), training=True)
     U_pred = ae_decoder(x, training=False)
     
     Ld_u, Ld_w, Ld_p, Ld_T, L_mc, L_u, L_w, L_T = loss_ns(U_batch, U_pred)
@@ -230,7 +230,7 @@ def train_step_pinn(x_batch, x_dec, U_batch, l_dwa, l_g, autoreg_prob):
 
 # HELPER VARIABLES FOR TRAINING
 loss_history = []
-l_g = tf.Variable([1. 1.], dtype=tf.float32, trainable=False) 
+l_g = tf.Variable([1., 1.], dtype=tf.float32, trainable=False) 
 w = tf.constant(0.9, dtype=tf.float32)
 l_dwa = tf.Variable(tf.ones([8], tf.float32) / 8, trainable=False)
  
@@ -340,8 +340,7 @@ for epoch in tf.range(1, epochs, dtype=tf.float32):
       if new_lr < learning_rate:
         learning_rate = new_lr
         optimizer.learning_rate.assign(learning_rate)
-        with open(f'mod_case{model_suffix}_log.txt', 'a') as log_file:
-          log_file.write(f"Reduced learning rate to {learning_rate:.4e}"+'\n')
+        
       wait = 0
    
   log1 = f"{tf.cast(epoch, tf.int32)}. ({l_g[0].numpy():.1e}, {l_g[1].numpy():.1e}), Data:{tf.reduce_mean(Ldata_pde[:4]):.2e}, "

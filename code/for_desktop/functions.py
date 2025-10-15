@@ -33,7 +33,7 @@ def load_uwpT(n=2500):
   data = []
   for f in files[:n]:
     with h5py.File(f, 'r') as h5f:
-        arrays.append(np.array(h5f['uwpT']))
+        data.append(np.array(h5f['uwpT']))
 
   uwpT = np.concatenate(data, axis=0)  
   x, z, t = load_coords()
@@ -159,7 +159,7 @@ def build_ae_encoder():
 
 # LOAD TRAINED SPATIAL DECODER 
 def build_ae_decoder():
-  _, dec_layers = get_ae_layers(ae_path_model)
+  _, dec_layers = get_ae_layers()
   inputs = Input(shape=(None,16,16,64), name='inputs')
   x = inputs
   for l in dec_layers: x = TimeDistributed(l, name=l.name)(x)
@@ -167,7 +167,7 @@ def build_ae_decoder():
 
 
 # PREPARE DATA FOR PI-CRNN
-def load_lstm_data(train_size, val_size, look_b, look_f, stride, Uf, P, T_h, T_0):
+def load_lstm_data(train_size, val_size, look_b, look_f, Uf, P, T_h, T_0, seqs):
     np.random.seed(1)
     ae_encoder = build_ae_encoder()
     data_train, data_val, x, z, _ = load_data(train_size, val_size, Uf, P, T_h, T_0)
@@ -181,8 +181,7 @@ def load_lstm_data(train_size, val_size, look_b, look_f, stride, Uf, P, T_h, T_0
     @tf.function(input_signature=[tf.TensorSpec(shape=[1, look_f, 256, 256, 4], dtype=tf.float32)])
     def compress_out(x):
       return ae_encoder(x)
-    
-    seqs = 240
+
     bsize = 1
     def create_dataset(starts, data):
       def generator():
@@ -205,7 +204,7 @@ def load_lstm_data(train_size, val_size, look_b, look_f, stride, Uf, P, T_h, T_0
     data_train_tf = create_dataset(train_starts, data_train)
     data_train_tf = data_train_tf.shuffle(buffer_size=seqs).batch(bsize).prefetch(tf.data.AUTOTUNE)
     
-    val_starts = np.random.choice(np.arange(look_b, val_size-look_f), size=20, replace=False)
+    val_starts = np.random.choice(np.arange(look_b, val_size-look_f), size=5, replace=False)
     data_val_tf = create_dataset(val_starts, data_val)
     data_val_tf = data_val_tf.batch(1).prefetch(tf.data.AUTOTUNE)
     

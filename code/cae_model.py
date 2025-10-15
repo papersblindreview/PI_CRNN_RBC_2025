@@ -128,8 +128,6 @@ for epoch in range(epochs):
       if new_lr < learning_rate:
         learning_rate = new_lr
         optimizer.learning_rate.assign(learning_rate)
-        with open(f'ae_{suffix}_log.txt', 'a') as log_file:
-          log_file.write(f"Reduced learning rate to {learning_rate:.4e}"+'\n')
       wait = 0
       
   log = f"Epoch {epoch+1}, Loss: {Ldata.numpy():.2e}, Val Loss: {val_loss.numpy():.2e}, "

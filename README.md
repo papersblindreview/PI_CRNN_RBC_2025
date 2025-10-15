@@ -9,7 +9,7 @@ There are four scripts in the `code` folder:
 3) `pi_crnn_model.py` contains code to run the physics-informed spatiotemporal model, conditional on the trained CAE
 4) `uq.py` contains code to reproduce predictions intervals using conformal method
 
-The `code` folder also contains a reproducible version able to run on a desktop machine. The files are the same as (1-4) and are in the `for_desktop` directory inside of `code`.
+The `code` folder also contains a reproducible version able to run on a desktop machine. The files are similar and are in the `for_desktop` directory inside of `code`.
 
 The DNS data for Rayleigh-Benard Convection used in this work is in the data folder, along with files containing the coordinates and physical constants. These can be reproduced from [this](https://git.uwaterloo.ca/SPINS/SPINS_main) public repository.
 

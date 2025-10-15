@@ -3,11 +3,9 @@ os.environ["KERAS_BACKEND"] = "tensorflow"
 import numpy as np 
 import scipy.io
 import tensorflow as tf
-import keras
-from keras import optimizers
-from keras.layers import Conv2DTranspose, Conv2D, ConvLSTM2D, TimeDistributed, LeakyReLU, LayerNormalization, ReLU
-from keras.layers import BatchNormalization, Dense, Flatten, Reshape, Permute, Input, Lambda, Add, Dropout, RNN, Softmax, Concatenate
-from keras import activations
+from tensorflow.keras.layers import Conv2DTranspose, Conv2D, ConvLSTM2D, TimeDistributed, LeakyReLU, LayerNormalization, ReLU
+from tensorflow.keras.layers import BatchNormalization, Dense, Flatten, Reshape, Permute, Input, Lambda, Add, Dropout, RNN, Softmax, Concatenate
+from tensorflow.keras import activations
 from tensorflow.keras.initializers import GlorotUniform
 from tensorflow.keras.saving import register_keras_serializable
 import scipy
@@ -19,7 +17,7 @@ import gc
 
 # LOAD COORDINATES 
 def load_coords():
-  with h5py.File('coordinates.mat', 'r') as mat_file:
+  with h5py.File('../../data/coordinates.mat', 'r') as mat_file:
   
     x = mat_file['x'][:].flatten()
     z = mat_file['z'][:].flatten()
@@ -29,7 +27,7 @@ def load_coords():
 
 # LOAD DNS DATA
 def load_uwpT(n=2500):
-  files = sorted([f for f in os.listdir('./data/') if 'RB' in f])
+  files = sorted(['../../data/'+f for f in os.listdir('../../data/') if 'RB' in f])
   data = []
   for f in files[:n]:
     with h5py.File(f, 'r') as h5f:
@@ -42,7 +40,7 @@ def load_uwpT(n=2500):
 # LOAD PHYSICAL CONSTANTS
 def load_constants():
   const_dict = {}
-  with h5py.File('physical_constants.mat', 'r') as mat_file:
+  with h5py.File('../../data/physical_constants.mat', 'r') as mat_file:
     for key, value in mat_file.items():
       const_dict[key] = np.array(value, dtype=np.float32)  
   return const_dict
@@ -84,13 +82,13 @@ def get_grads(x, z, const_dict, Uf):
   dx = np.concatenate((x[1:2] - x[:1], dx, x[-2:-1] - x[-1:]))
   dz = np.concatenate((z[1:2] - z[:1], dz, z[-2:-1] - z[-1:]))
   
-  dt = const_dict['plot_interval'] * Uf / Lz
+  dt = const_dict['delta_t'] * Uf / Lz
   return tf.cast(dx, tf.float32), tf.cast(dz, tf.float32), tf.cast(dt, tf.float32) 
    
    
 # LOAD TRAIN-VAL DATA SPLIT
 def load_data(train_size, val_size, Uf, P, T_h, T_0):
-  data_dim, x, z, t = load_uwpT() 
+  data_dim, x, z, t = load_uwpT(n=train_size+val_size) 
 
   u, w, p, T = nondim(data_dim, Uf, P, T_h, T_0)
   data = np.concatenate((u, w, p, T), axis=-1)
@@ -136,9 +134,8 @@ def build_ae(nodes_enc, kernel_size, activation):
   return tf.keras.Model(inputs, x, name='Autoencoder')
 
   
-def get_ae_layers():
-  autoencoder = tf.keras.models.load_model('ae.keras')
-
+def get_ae_layers(autoencoder):
+  
   enc_layers = []
   dec_layers = []
   for l in autoencoder.layers:
@@ -150,16 +147,16 @@ def get_ae_layers():
   return enc_layers, dec_layers
 
 # BUILD SPATIAL ENCODER TO REDUCE DIMENSION OF INPUT SEQUENCES TO PI-CRNN
-def build_ae_encoder():
-  enc_layers, _ = get_ae_layers()
+def build_ae_encoder(autoencoder):
+  enc_layers, _ = get_ae_layers(autoencoder)
   inputs = Input(shape=(None,256,256,4), name='inputs')
   x_enc = inputs
   for l in enc_layers: x_enc = TimeDistributed(l, name=l.name)(x_enc)
   return tf.keras.Model(inputs, x_enc, name='AE_Encoder')
 
 # LOAD TRAINED SPATIAL DECODER 
-def build_ae_decoder():
-  _, dec_layers = get_ae_layers()
+def build_ae_decoder(autoencoder):
+  _, dec_layers = get_ae_layers(autoencoder)
   inputs = Input(shape=(None,16,16,64), name='inputs')
   x = inputs
   for l in dec_layers: x = TimeDistributed(l, name=l.name)(x)
@@ -167,9 +164,9 @@ def build_ae_decoder():
 
 
 # PREPARE DATA FOR PI-CRNN
-def load_lstm_data(train_size, val_size, look_b, look_f, Uf, P, T_h, T_0):
+def load_lstm_data(train_size, val_size, look_b, look_f, Uf, P, T_h, T_0, seqs_train, seqs_val, autoencoder):
     np.random.seed(1)
-    ae_encoder = build_ae_encoder()
+    ae_encoder = build_ae_encoder(autoencoder)
     data_train, data_val, x, z, _ = load_data(train_size, val_size, Uf, P, T_h, T_0)
     data_train = tf.convert_to_tensor(data_train)
     data_val = tf.convert_to_tensor(data_val)
@@ -181,8 +178,7 @@ def load_lstm_data(train_size, val_size, look_b, look_f, Uf, P, T_h, T_0):
     @tf.function(input_signature=[tf.TensorSpec(shape=[1, look_f, 256, 256, 4], dtype=tf.float32)])
     def compress_out(x):
       return ae_encoder(x)
-    
-    seqs = 400
+
     bsize = 1
     def create_dataset(starts, data):
       def generator():
@@ -201,11 +197,11 @@ def load_lstm_data(train_size, val_size, look_b, look_f, Uf, P, T_h, T_0):
       return tf.data.Dataset.from_generator(generator, output_types, output_shapes)
     
     # Create datasets
-    train_starts = np.random.choice(np.arange(look_b, train_size-look_f), size=seqs, replace=False)
+    train_starts = np.random.choice(np.arange(look_b, train_size-look_f), size=seqs_train, replace=False)
     data_train_tf = create_dataset(train_starts, data_train)
-    data_train_tf = data_train_tf.shuffle(buffer_size=seqs).batch(bsize).prefetch(tf.data.AUTOTUNE)
+    data_train_tf = data_train_tf.shuffle(buffer_size=seqs_train).batch(bsize).prefetch(tf.data.AUTOTUNE)
     
-    val_starts = np.random.choice(np.arange(look_b, val_size-look_f), size=40, replace=False)
+    val_starts = np.random.choice(np.arange(look_b, val_size-look_f), size=seqs_val, replace=False)
     data_val_tf = create_dataset(val_starts, data_val)
     data_val_tf = data_val_tf.batch(1).prefetch(tf.data.AUTOTUNE)
     

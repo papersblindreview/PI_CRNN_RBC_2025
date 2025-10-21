@@ -1,6 +1,6 @@
-# PI_CRNN2025
+# PI_CRNN_RBC_2025
 
-Supplemental codes for "A Physics-Informed Convolutional Long Short Term Memory Statistical Model for Fluid Thermodynamics Simulations".
+Supplemental codes for "A Physics-Informed Spatiotemporal Deep Learning Framework for Turbulent Systems".
 
 There are four scripts in the `code` folder:
 
